@@ -1,7 +1,5 @@
 # Predicción de precios de automóviles con regresión LASSO
 
-Trabajo práctico final desarrollado en el marco de la **Especialización en Estadística Matemática** (UBA, FCEyN) — Taller de Datos: Regresión.
-
 ---
 
 ## Descripción del problema
@@ -92,4 +90,4 @@ car-price-prediction/
 
 ## Contexto académico
 
-Trabajo final de la materia **Taller de Datos** correspondiente a la **Especialización en Estadística Matemática**, Facultad de Ciencias Exactas y Naturales, Universidad de Buenos Aires (UBA).
+Trabajo práctico de la materia **Taller de Datos** correspondiente a la **Especialización en Estadística Matemática**, Facultad de Ciencias Exactas y Naturales, Universidad de Buenos Aires (UBA).
