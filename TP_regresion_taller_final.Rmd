@@ -1,0 +1,1116 @@
+---
+title: "Taller de datos: Regresión"
+author: "Carla Zanellato, Santiago Dandois"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # oculta el código
+  message = FALSE,   # oculta mensajes de librerías
+  warning = FALSE,   # oculta advertencias
+  results = 'hide',  # oculta salidas de texto
+  fig.show = 'hold'  # muestra solo los gráficos
+)
+
+```
+
+```{r clean_workdir}
+# limpiar entorno y setear directorio de trabajo
+rm(list = ls())
+
+setwd("C:/Users/carla/OneDrive/Escritorio/Posgrado Estadística/8. Taller de datos/2. Regresion")
+
+```
+
+```{r librerias}
+
+# librerías
+
+library(tidyverse)   # Analisis explotratorio: preparar, limpiar, explorar y visualizar
+
+library(caret)       # Classification And REgression Training - modelar, validar, evaluar e interpretar
+
+library(gridExtra)    # para pares de gráficos de ggplot
+
+library(corrplot)     # matriz de correlaciones
+
+library(skimr)       # resumen descriptivo 
+
+#install.packages("VIM")
+library(VIM)
+
+# install.packages("car")
+library(car) #para vif
+
+
+```
+
+```{r carga_datos}
+## Cargar datos y transformar variables categóricas a factor
+autos <- read.csv("autos.csv") %>%
+  mutate_if(is.character, as.factor)
+
+```
+
+## Descripción del problema
+
+El objetivo de este trabajo es desarrollar un modelo predictivo para estimar el precio de automóviles a partir de sus características técnicas y de diseño.
+
+La consigna indica que se debe lograr el menor error de predicción posible.
+utilizando la menor cantidad de variables explicativas.
+Es decir, se deben priorizar modelos simples, estables y fácilmente interpretables.
+
+## Descripción del dataset:
+
+```{r desc_dataset}
+
+# Resumen
+str(autos)
+
+skim(autos) # de skymer
+colnames(autos)
+
+```
+
+```         
+── Data Summary ────────────────────────
+                           Values
+Name                       autos 
+Number of rows             205   
+Number of columns          26    
+_______________________          
+Column type frequency:           
+  character                10    
+  numeric                  16    
+________________________         
+```
+
+El dataset dispone de 26 variables en total, una variable respuesta y 25 explicativas o covariables
+
+El numero de observaciones es 205.
+
+Las ***variables explicativas*** se dividen en categóricas y numéricas (dataset mixto):
+
+***Categóricas:***
+
+1.  `make`: marca del auto
+2.  `fuel_type`: tipo de combustible del vehículo
+3.  `aspiration`: Tipo de aspiración. Método de ingreso de aire al motor
+4.  `num_of_doors`: número de puertas
+5.  `body_style`: Tipo de carrocería
+6.  `drive_wheels`: tipo de tracción
+7.  `engine_location`: ubicación del motor
+8.  `engine_type`: tipo de motor
+9.  `num_of_cylinders`: número de cilindros del motor
+10. `fuel_system`: sistema inyección
+
+\newpage
+
+***Numéricas:***
+
+1.  `symboling`: indice de riesgo asignado por la aseguradora
+2.  `normalized_losses`: perdida promedio por auto por año, ajustada según la clase o segmento del vehículo
+3.  `wheel_base`: distancia entre ejes
+4.  `length`: largo del vehículo
+5.  `width`: ancho del vehículo
+6.  `height`: alto del vehículo
+7.  `curb_weight`: peso en vacío del vehículo, peso del con todo su equipo estándar, sin pasajeros.
+8.  `engine_size`: tamaño del motor, cilindradas
+9.  `bore`: diámetro del cilindro del motor
+10. `stroke`: carrera del pistón
+11. `compression_ratio`: Relación de compresión del motor
+12. `horsepower`: caballos de fuerza, potencia del motor
+13. `peak_rpm`: RPM a la que el motor alcanza su potencia máxima
+14. `city_mpg`: Consumo de combustible en ciudad
+15. `highway_mpg`: Consumo de combustible en autopista
+
+***variable respuesta***
+
+`price`: Precio del vehículo
+
+
+### Iconveinientes del dataset:
+
+***1. Datos faltantes***
+
+Uno de los inconvenientes de este dataset es que presenta algunas variables valores faltantes, estas son:
+
+```{r datos_faltantes, results='markup'}
+####--------------------------------------------------------
+NAs <- as.data.frame(colSums(is.na(autos)))
+
+NAs <- NAs  %>%
+  rename("NAs" = "colSums(is.na(autos))")
+
+
+NAs <- NAs  %>%
+  filter(NAs!=0)
+
+print(NAs)
+```
+
+***2. Variables con muchas categorías categorías con pocos valores***
+
+Dentro de las variables categóricas, hay algunas con muchas categorías y otras con pocas observaciones por categoría.
+
+En el primer caso, una variable con muchas categorías da lugar a la creación de muchas variables dummies en algunos modelos, lo cual aumenta dimensional y dificulta interpretación.
+
+En el caso de categorías con pocas observaciones, agregan ruido sin aportar información significativa para el modelo, lo cual aumenta la varianza del mismo.
+
+Para tener una primera aproximación del comportamiento de la variable respuesta según las variables explicativas se realizan gráficos de dispersión para variables continuas y boxplots para las categóricas
+
+\newpage
+## Estudio de las distribuciones
+
+### Distribución de la variable respuesta:
+
+```{r dist_respuesta, out.width="70%", fig.align='center'}
+
+ggplot(autos, aes(x = price)) +
+  geom_density(
+    alpha = 0.5, 
+    fill = "lightblue3",
+    colour = darken("lightblue", amount = 0.4),
+    linewidth = 0.6) +
+  labs(title = "densidad de price") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+
+
+```
+La distribución del precio es asimétrica a la derecha, con la mayor concentración de datos entre 7.000 y 10.000 dólares y una cola larga que se extiende hacia precios más altos. Se observan algunos vehículos de gama alta entre 30.000 y 45.000 dólares, pero son pocos en comparación con el resto.
+
+### Exploración variables explicativas
+
+Se muestra un resumen del comportamiento de cada variable con relación a la variable respuesta y un análisis de correlación para las variables numéricas.
+
+\newpage
+***Variación del precio según variables categóricas***
+```{r graf_categ, warning=FALSE, message=FALSE, out.width="75%", fig.align='center'}
+## Formato largo ------------------------------------------------------------------
+# variables relacionada con las características externas
+df_cat1 <- autos %>%
+  select(c("price","drive_wheels", "body_style", "num_of_doors")) %>%
+  pivot_longer(cols = c("drive_wheels", "body_style", "num_of_doors"),
+               names_to = "variable",
+               values_to = "categoria")
+
+
+# variables relacionada con las motor y combustible
+df_cat2 <- autos %>%
+  select(c("price", "engine_location", "engine_type", "num_of_cylinders")) %>%
+  pivot_longer(cols = c(, "engine_location", "engine_type", "num_of_cylinders"),
+               names_to = "variable",
+               values_to = "categoria")
+
+df_cat3 <- autos %>%
+  select(c("price","fuel_type", "aspiration", "fuel_system")) %>%
+  pivot_longer(cols = c("fuel_type", "aspiration", "fuel_system"),
+               names_to = "variable",
+               values_to = "categoria")
+
+# variable Marca del auto
+df_cat4 <- autos %>%
+  select(c("price","make")) %>%
+  pivot_longer(cols = c("make"),
+               names_to = "variable",
+               values_to = "categoria")
+
+## Graficos ----------------------------------------------------------------------
+
+ggplot(df_cat1, aes(x = categoria, y = price)) +
+  geom_boxplot(outlier.color = "red3", fill = "lightblue") +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(title = "Distribución del precio según variables características externas",
+       x = "Categoría",
+       y = "Precio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplot(df_cat2, aes(x = categoria, y = price)) +
+  geom_boxplot(outlier.color = "red3", fill = "lightblue") +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(title = "Distribución del precio según variables del motor",
+       x = "Categoría",
+       y = "Precio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(df_cat3, aes(x = categoria, y = price)) +
+  geom_boxplot(outlier.color = "red3", fill = "lightblue") +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(title = "Distribución del precio según variables del motor",
+       x = "Categoría",
+       y = "Precio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(df_cat4, aes(x = categoria, y = price)) +
+  geom_boxplot(outlier.color = "red3", fill = "lightblue") +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  labs(title = "Distribución del precio según marca del vehículo",
+       x = "Categoría",
+       y = "Precio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+En un análisis exploratorio inicial, algunas variables categóricas muestran relaciones visibles con el precio, como la marca del vehículo, el tipo de tracción y las variables asociadas con el tipo y dimensiones del motor, donde se observan diferencias claras entre categorías (por ejemplo, autos RWD, turbo o de marcas premium tienden a precios más altos).
+Otras variables, como el número de puertas o algunos tipos de carrocería, muestran diferencias menos marcadas.
+
+
+\newpage
+***Variación del precio según variables numéricas***
+```{r graf_num, warning=FALSE, message=FALSE, , out.width="60%", fig.align='center'}
+## Reestructurar a formato largo ------------------------------------------------------------
+
+df_1 <- autos %>%
+  select("price", "length", "width", "curb_weight",) %>%
+  pivot_longer(cols = c("length", "width", "curb_weight"),
+               names_to = "variable",
+               values_to = "valor")
+
+df_2 <- autos %>%
+  select("price", "engine_size", "bore", "horsepower") %>%
+  pivot_longer(cols = c("engine_size", "bore", "horsepower"),
+               names_to = "variable",
+               values_to = "valor")
+
+
+df_3 <- autos %>%
+  select("price",  "peak_rpm", "city_mpg", "highway_mpg") %>%
+  pivot_longer(cols = c( "peak_rpm", "city_mpg", "highway_mpg"),
+               names_to = "variable",
+               values_to = "valor")
+
+df_4 <- autos %>%
+  select("price", "wheel_base", "height", "symboling") %>%
+  pivot_longer(cols = c("wheel_base", "height", "symboling"),
+               names_to = "variable",
+               values_to = "valor")
+
+df_5 <- autos %>%
+  select("price", "normalized_losses", "compression_ratio", "stroke") %>%
+  pivot_longer(cols = c("normalized_losses", "compression_ratio", "stroke"),
+               names_to = "variable",
+               values_to = "valor")
+
+## Grafico de dispersión --------------------------------------------------------------
+
+ggplot(df_1, aes(x = valor, y = price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red3") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+       x = "Variable explicativa",
+       y = "Precio") +
+  theme_bw()
+
+ggplot(df_2, aes(x = valor, y = price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red3") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+       x = "Variable explicativa",
+       y = "Precio") +
+  theme_bw()
+
+ggplot(df_3, aes(x = valor, y = price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red3") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+       x = "Variable explicativa",
+       y = "Precio") +
+  theme_bw()
+
+ggplot(df_4, aes(x = valor, y = price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red3") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+       x = "Variable explicativa",
+       y = "Precio") +
+  theme_bw()
+
+ggplot(df_5, aes(x = valor, y = price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red3") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+       x = "Variable explicativa",
+       y = "Precio") +
+  theme_bw()
+
+
+```
+
+En las variables numéricas, algunas muestran asociaciones claras (por ejemplo, engine_size, horsepower, curve_weight, length y width tienden a aumentar con el precio), mientras que otras presentan relaciones más débiles o ruidosas (normalized_looses, peak_rpm, stroke, height).
+
+Las variables vinculadas al consumo de combustible (city_mpg y highway_mpg) muestran una relación negativa, coherente con que autos con mayor gasto de combustible suelen ser menos eficientes.
+
+### Correlaciones variables numéricas
+
+Se espera que ciertas características estén muy relacionadas por su naturaleza, como pueden ser
+
+-   las variables relacionadas con el tamaño del auto,
+
+-   las relacionadas con el tamaño del motor,
+
+-   variables indicativas de la performance del vehículo (potencia, consumo)
+
+\newpage
+
+***Heatmap de la matriz de correlación***
+
+```{r}
+
+# variables explicativas numéricas
+autos_num <- autos %>%
+  select(where(is.numeric)) %>%
+  select(-price)
+
+
+# matriz de correlación omitiendo valores faltantes
+cor_matrix <- cor(autos_num, use = "pairwise.complete.obs") # usa solo los pares disponibles (ignorando NAs)
+
+# gráfico de correlación o heatmap
+corrplot(cor_matrix,
+         method = "color",
+         type = "upper",
+         tl.col = "black",
+         tl.cex = 0.8,
+         addCoef.col = "black",
+         number.cex = 0.5)
+
+```
+
+En el gráfico se observan las siguientes correlaciones: Correlaciones positivas:
+
+-   `highway_mpg` con `city_mpg`
+
+-   `curb_weight` con `engine_size`, `length` y `width`
+
+-   `length` con `width` y `wheel_base`
+
+-   `horsepower` con `curb_weight` y `engine_size`
+
+-   `wheel_base` con `curb_weight` y `width`
+
+Negativas:
+
+-   `horsepower` con `highway_mpg` y `city_mpg`
+
+-   `curb_weight` con `highway_mpg` y `city_mpg`
+
+-   `length` y `width` con `highway_mpg` y `city_mpg`
+
+Una alta correlación es indicativa de una colinealidad entre variables, pero valores bajos no aseguran la no colinealidad, ya que en este caso solo se analizan las variables de a pares.
+
+\newpage
+## Transformación del dataset
+
+### Manejo de datos faltantes
+
+Para las variables con pocos datos faltantes (`price`, `bore`, `stroke`, `horsepower`, `peak_rpm`, `num_of_doors`), se optó por descartar las filas que los contienen ya que supone una perdida muy pequeña de datos (aprox. 5%)
+
+```{r}
+# Drop de filas sin datos
+
+autos_sin_na <- autos %>%
+  drop_na(price, bore, stroke, horsepower, peak_rpm, num_of_doors)
+    
+
+# Borrando los NA de price, bore, stroke, horsepower, peak_rm, se pierde solo 4.9 porciento de los datos. 
+paste(
+  "Filas antes:", nrow(autos),
+  "- Filas después:", nrow(autos_sin_na),
+  "- Proporción:", round(nrow(autos_sin_na) / nrow(autos), 3)
+)
+
+```
+
+Para el caso de `normalized_looses`, con 49 datos faltantes, se realiza la imputación por medio de knn.
+Primero re realiza un análisis de correlación con las demás covariables y se seleccionan las que tienen una correlación mayor a 0.2.
+
+```{r, , out.width="70%", fig.align='center'}
+
+# Analizo correlación, que variables estan mas correlacionadas con la variable que queremos imputar
+vec <- autos_sin_na %>%
+  select(where(is.numeric)) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  (\(m) m[, "normalized_losses"])()
+
+correlated_vars <- tibble(
+  variable = names(vec),
+  correlacion = vec
+) |>
+  filter(abs(correlacion) > 0.2) 
+
+correlated_vars
+```
+
+```{r, , out.width="70%", fig.align='center'}
+
+# imputación NAs de normalized_looses
+vars_cor <- correlated_vars$variable
+
+autos_imp <- VIM::kNN(autos_sin_na, variable = "normalized_losses", k = 5, dist_var = vars_cor, imp_var = TRUE )
+
+skim(autos_imp)
+
+ggplot() +
+  geom_density(
+    data = autos_sin_na |> drop_na(normalized_losses),
+    aes(x = normalized_losses, color = "Original"),
+    alpha = 0.4
+  ) +
+  geom_density(
+    data = autos_imp,
+    aes(x = normalized_losses, color = "Imputado"),
+    alpha = 0.4
+  ) +
+  geom_point(
+    data = autos_imp |> filter(normalized_losses_imp),
+    aes(x = normalized_losses, y = 0 )
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Comparación de densidad: Original vs Imputado",
+    x = "Normalized Losses",
+    color = "Dataset"
+  )
+
+autos_imp <- autos_imp %>%
+  select(-normalized_losses_imp)
+
+# chequeo final
+colSums(is.na(autos_imp))
+```
+
+### Tratamiento de variables categóricas
+
+Se analizan las variables categóricas con muchas categorías o pocas observaciones por categoría para evaluar posible agrupamiento para reducir la cantidad de categorías por variable y evitar categorías con muy pocos datos.
+
+```{r}
+autos_imp %>% count(make, sort = TRUE)
+autos_imp  %>% count(engine_location, sort = TRUE)
+autos_imp  %>% count(engine_type, sort = TRUE)
+autos_imp  %>% count(num_of_cylinders, sort = TRUE)
+autos_imp  %>% count(aspiration, sort = TRUE)
+autos_imp  %>% count(body_style, sort = TRUE)
+autos_imp  %>% count(fuel_system, sort = TRUE)
+autos_imp  %>% count(fuel_type, sort = TRUE)
+autos_imp  %>% count(drive_wheels, sort = TRUE)
+autos_imp  %>% count(num_of_doors, sort = TRUE)
+```
+
+De lo observado en los resúmenes de las variables categóricas junto con los boxplots se decide agrupar algunas variables categóricas.
+
+\newpage
+
+#### Recategorización de MAKE
+
+```{r recateg_make, , out.width="70%", fig.align='center'}
+# 1) Selecciono variables numéricas y escalo
+autos_scaled <- autos_imp %>%
+  mutate(across(where(is.numeric), scale))
+
+
+# Resumen por marca ----------------------------------------------------
+make_stats <- autos_scaled %>%
+  group_by(make) %>%
+  summarise(
+    mean_price       = mean(price, na.rm = TRUE),
+    mean_engine_size = mean(engine_size, na.rm = TRUE)
+  )
+
+make_stats
+
+# K means -------------------------------------------------------------------
+set.seed(123)
+k <- 3  # gama_baja / gama_media / alta_gama
+km_make <- kmeans(
+  make_stats[, c("mean_price", "mean_engine_size")],
+  centers = k
+)
+
+# Agregamos el cluster a la tabla de marcas ----------------------------
+make_stats$cluster <- factor(km_make$cluster)
+
+make_stats
+
+# Unir los clusters al dataset original ------------------------------------
+autos_rec <- autos_imp %>%
+  left_join(
+    make_stats %>% dplyr::select(make, make_cluster = cluster),
+    by = "make"
+  )
+
+autos_rec$make_cluster <- factor(autos_rec$make_cluster)
+
+# cambiar las etiquetas de los clusters ----------------------------------
+autos_rec <- autos_rec %>%
+  left_join(
+    make_stats %>%
+      group_by(cluster) %>%
+      summarise(mean_price = mean(mean_price)) %>%
+      arrange(mean_price) %>%
+      mutate(new_label = c("gama_baja", "gama_media", "alta_gama")) %>%
+      dplyr::select(cluster, new_label),
+    by = c("make_cluster" = "cluster")
+  ) %>%
+  mutate(
+    make_cluster = factor(new_label,
+                          levels = c("gama_baja", "gama_media", "alta_gama"))
+  ) %>%
+  dplyr::select(-new_label)
+
+```
+
+```{r, results='markup', out.width="70%", fig.align='center'}
+# Resultado ----------------------------------------------------------------
+autos_rec %>% count(make_cluster, sort = TRUE)
+
+# Gráfico ------------------------------------------------------------------
+
+ggplot(make_stats, aes(x = mean_engine_size,
+                       y = mean_price,
+                       color = cluster,
+                       label = make)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 1, vjust = 1, check_overlap = TRUE, show.legend = FALSE) +
+  labs(
+    x = "Tamaño medio del motor",
+    y = "Precio medio",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+#### Recategorización de body_style
+
+```{r recateg_body, , out.width="70%", fig.align='center'}
+# Resumen por body_style ----------------------------------------------------
+body_stats <- autos_scaled %>%
+  group_by(body_style) %>%
+  summarise(
+    mean_price = mean(price, na.rm = TRUE),
+    mean_weight = mean(curb_weight, na.rm = TRUE)
+  )
+
+# K means ---------------------------------------------------------------------
+set.seed(123)
+k <- 3
+km_body <- kmeans(
+  body_stats[, c("mean_price", "mean_weight")],
+  centers = k
+)
+
+# Agregamos el cluster a la tabla de marcas ----------------------------------
+body_stats$cluster <- factor(km_body$cluster)
+body_stats
+
+# Unir los clusters al dataset original --------------------------------------
+autos_rec <- autos_rec %>%
+  left_join(body_stats %>% dplyr::select(body_style, body_cluster = cluster),
+            by = "body_style")
+
+autos_rec$body_cluster <- factor(autos_rec$body_cluster)
+
+# cambiar las etiquetas de los clusters ----------------------------------
+autos_rec <- autos_rec %>%
+  left_join(
+    body_stats %>%
+      group_by(cluster) %>%
+      summarise(mean_price = mean(mean_price)) %>%
+      arrange(mean_price) %>%
+      mutate(new_label = c("compacto", "familiar", "convertible")) %>%
+      dplyr::select(cluster, new_label),
+    by = c("body_cluster" = "cluster")
+  ) %>%
+  mutate(
+    body_cluster = factor(new_label,
+                          levels = c("compacto", "familiar", "convertible"))
+  ) %>%
+  dplyr::select(-new_label)
+
+
+```
+
+```{r, results='markup', out.width="70%", fig.align='center'}
+# Resultado ----------------------------------------------------------------
+autos_rec %>% count(body_cluster, sort = TRUE)
+
+# Gráfico  -----------------------------------------------------------------
+
+ggplot(body_stats,
+       aes(x = mean_weight, y = mean_price,
+           color = cluster, label = body_style)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 1, vjust = 1, check_overlap = TRUE) +
+  labs(
+    x = "Peso promedio (curb_weight)",
+    y = "Precio promedio",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+\newpage
+
+#### Recaegorización de engine_type
+
+```{r recateg_engine_type, out.width="70%", fig.align='center' }
+# Resumen por engine_type ----------------------------------------------------
+engine_stats <- autos_scaled %>%
+  group_by(engine_type) %>%
+  summarise(
+    mean_price       = mean(price, na.rm = TRUE),
+    mean_engine_size = mean(engine_size, na.rm = TRUE)
+  )
+
+
+# K means ---------------------------------------------------------------------
+set.seed(123)
+k <- 2
+km_engine <- kmeans(
+  engine_stats[, c("mean_price", "mean_engine_size")],
+  centers = k
+)
+
+# Agregamos el cluster a la tabla de marcas ----------------------------------
+engine_stats$cluster <- factor(km_engine$cluster)
+engine_stats
+
+# Unir los clusters al dataset original --------------------------------------
+autos_rec <- autos_rec %>%
+  left_join(
+    engine_stats %>% dplyr::select(engine_type, engine_cluster = cluster),
+    by = "engine_type"
+  )
+
+autos_rec$engine_cluster <- factor(autos_rec$engine_cluster)
+
+# cambiar las etiquetas de los clusters ----------------------------------
+
+autos_rec <- autos_rec %>%
+  left_join(
+    engine_stats %>%
+      group_by(cluster) %>%
+      summarise(mean_price = mean(mean_price)) %>%
+      arrange(mean_price) %>%
+      mutate(new_label = c("standard", "premium")) %>%
+      dplyr::select(cluster, new_label),
+    by = c("engine_cluster" = "cluster")
+  ) %>%
+  mutate(
+    engine_cluster = factor(new_label,
+                            levels = c("standard", "premium"))
+  ) %>%
+  dplyr::select(-new_label)
+
+
+```
+
+```{r, results='markup', out.width="70%", fig.align='center'}
+# Resultado ----------------------------------------------------------------
+autos_rec %>% count(engine_cluster, sort = TRUE)
+
+# Gráfico  -----------------------------------------------------------------
+
+ggplot(engine_stats,
+       aes(x = mean_engine_size, y = mean_price,
+           color = cluster, label = engine_type)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 1, vjust = 1, check_overlap = TRUE) +
+  labs(
+    x = "engine_size promedio",
+    y = "Precio promedio",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+#### Recaegorización de fuel_system
+
+```{r, , out.width="70%", fig.align='center'}
+# Resumen por fuel_system ----------------------------------------------------
+fuel_stats <- autos_scaled %>%
+  group_by(fuel_system) %>%
+  summarise(
+    mean_price      = mean(price, na.rm = TRUE),
+    mean_hp         = mean(horsepower, na.rm = TRUE),
+    n = n()
+  )
+fuel_stats
+
+# K means ---------------------------------------------------------------------
+set.seed(123)
+k <- 3
+km_fuel <- kmeans(
+  fuel_stats[, c("mean_price", "mean_hp")],
+  centers = k
+)
+
+
+# Agregamos el cluster a la tabla de marcas ----------------------------------
+fuel_stats$cluster <- factor(km_fuel$cluster)
+fuel_stats
+
+# Unir los clusters al dataset original --------------------------------------
+autos_rec <- autos_rec %>%
+  left_join(
+    fuel_stats %>% dplyr::select(fuel_system, fuel_cluster = cluster),
+    by = "fuel_system"
+  )
+
+autos_rec$fuel_cluster <- factor(autos_rec$fuel_cluster)
+
+# cambiar las etiquetas de los clusters ----------------------------------
+autos_rec <- autos_rec %>%
+  left_join(
+    fuel_stats %>%
+      group_by(cluster) %>%
+      summarise(mean_price = mean(mean_price)) %>%
+      arrange(mean_price) %>%
+      mutate(label = c("system_1", "system_2", "system_3")) %>%
+      dplyr::select(cluster, label),
+    by = c("fuel_cluster" = "cluster")
+  ) %>%
+  mutate(
+    fuel_cluster = factor(label, levels = unique(label))
+  ) %>%
+  dplyr::select(-label)
+
+
+```
+
+```{r, results='markup', out.width="70%", fig.align='center'}
+# Resultado ----------------------------------------------------------------
+autos_rec %>% count(fuel_cluster, sort = TRUE)
+
+# Gráfico  -----------------------------------------------------------------
+
+ggplot(fuel_stats,
+       aes(x = mean_hp, y = mean_price,
+           color = cluster,
+           label = fuel_system)) +
+  geom_point(size = 3) +
+  geom_text(hjust = 1.1, vjust = 1.1, check_overlap = TRUE) +
+  labs(
+    x = "Horsepower promedio",
+    y = "Precio promedio",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+```
+
+\newpage
+
+#### Conversión de num_of_cylinders a numérica
+
+Se decide convertir esta variable a numérica por sus características, son números enteros que muestran una correlación positiva con la variable respuesta `precio`.
+
+```{r, out.width="70%", fig.align='center'}
+autos_rec$num_of_cylinders <- factor(autos_rec$num_of_cylinders,
+                          levels = c("two", "three", "four", "five", "six", "eight", "twelve"))
+
+# variables relacionada con las motor y combustible
+df_num_cil <- autos_rec %>%
+  select("num_of_cylinders", "price") %>%
+  pivot_longer(cols = "num_of_cylinders",
+               names_to = "variable",
+               values_to = "categoria")
+
+ggplot(df_num_cil, aes(x = categoria, y = price)) +
+  geom_boxplot(outlier.color = "red3", fill = "lightblue") +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  labs(title = "Distribución del precio según el número de cilindros",
+       x = "Categoría",
+       y = "Precio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+
+autos_rec <- autos_rec %>%
+  mutate(
+    num_of_cylinders = case_when(
+      num_of_cylinders == "two"    ~ 2,
+      num_of_cylinders == "three"  ~ 3,
+      num_of_cylinders == "four"   ~ 4,
+      num_of_cylinders == "five"   ~ 5,
+      num_of_cylinders == "six"    ~ 6,
+      num_of_cylinders == "eight"  ~ 8,
+      num_of_cylinders == "twelve" ~ 12
+    )
+  )
+
+```
+
+```{r}
+autos_final <- autos_rec %>%
+  select(
+    -make,
+    -body_style,
+    -engine_type,
+    -fuel_system,
+  )
+```
+
+\newpage
+## Ajuste de un modelo con glmnet
+
+Dado que el conjunto de datos posee un número elevado de predictores (incluyendo múltiples variables categóricas), presencia de multicolinealidad y un tamaño muestral reducido, se optó por utilizar regresión penalizada a través del paquete glmnet.
+Como método de penalización se eligió LASSO debido a que realiza automáticamente la selección de variables
+
+Esta metodología permite:
+
+-   controlar el sobreajuste mediante regularización, mejorando la capacidad de generalización
+
+-   estabilizar los coeficientes en presencia de predictores correlacionados
+
+-   seleccionar automáticamente las variables más relevantes, obteniendo modelos más simples
+
+La elección del parámetro de penalización $\lambda$ se realiza mediante validación cruzada.
+
+```{r, out.width="70%", fig.align='center'}
+
+# install.packages("glmnet")
+library(glmnet)
+
+# matriz X e y -----------------------------------------------------------------
+
+# y = variable respuesta
+y <- autos_final$price
+
+# X = todas las explicativas, con dummies para factores
+X <- model.matrix(price ~ ., data = autos_final)[, -1]
+
+# Modelo Lasso ----------------------------------------------------------------
+
+lambda_grid <- 10^ seq (5, -2, length = 300)
+
+fit.lasso <- glmnet(X, y, alpha = 1,
+                    lambda = lambda_grid )
+
+plot(fit.lasso) #Ahora ploteamos el modelo
+
+
+# Ajustar LASSO con CV ---------------------------------------------------------
+# glmnet estandariza las variables internamente (standardize = TRUE por defecto)
+
+set.seed(123)
+
+cv_lasso <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 1,        # LASSO
+  nfolds = 5,       # CV 5-fold 
+)
+
+plot(cv_lasso)
+
+```
+\newpage
+### Evaluamos los resultados con distintos lambdas
+
+1.  lambda que minimiza el MRSE
+2.  lambda que minimiza el número de variales
+
+```{r}
+# ver el lambda óptimo
+lambda_min <- cv_lasso$lambda.min # lambda que minimiza el error
+lambda_min 
+
+lambda_1se <- cv_lasso$lambda.1se   # lambda más parsimonioso
+lambda_1se 
+
+
+# Ver los coeficientes en el lambda mínimo
+coef_lasso_min <- coef(cv_lasso, s = "lambda.min")
+coef_lasso_min
+
+
+vars_lasso_min <- rownames(coef_lasso_min)[coef_lasso_min[,1] != 0]
+vars_lasso_min <- vars_lasso_min[vars_lasso_min != "(Intercept)"]
+
+rmse_min <- sqrt(cv_lasso$cvm[cv_lasso$lambda == cv_lasso$lambda.min])
+rmse_min 
+
+# Ver los coeficientes en el lambda 1se
+coef_lasso_1se <- coef(cv_lasso, s = "lambda.1se")
+coef_lasso_1se
+
+vars_lasso_1se <- rownames(coef_lasso_1se)[coef_lasso_1se[,1] != 0]
+vars_lasso_1se <- vars_lasso_1se[vars_lasso_1se != "(Intercept)"]
+
+rmse_1se <- sqrt(cv_lasso$cvm[cv_lasso$lambda == cv_lasso$lambda.1se])
+rmse_1se
+
+# Coeficientes para lambda 1se --------------------------------------
+
+coef_1se <- data.frame(
+  variable = rownames(as.matrix(coef_lasso_1se)),
+  coef     = as.numeric(coef_lasso_1se)
+)
+
+# tabla de coeficientes nulos 
+coef_1se_nul <- coef_1se %>%
+  filter(coef == 0)
+coef_1se_nul
+# tabla de coeficientes no nulos 
+coef_1se_NOnul <- coef_1se %>%
+  filter(coef != 0)
+coef_1se_NOnul
+
+
+# Coeficientes para lambda min ----------------------------------------
+
+coef_min<- data.frame(
+  variable = rownames(as.matrix(coef_lasso_min)),
+  coef     = as.numeric(coef_lasso_min)
+)
+# tabla de coeficientes nulos 
+coef_min_nul <- coef_min %>%
+  filter(coef == 0)
+coef_min_nul
+# tabla de coeficientes no nulos 
+coef_min_NOnul <- coef_min %>%
+  filter(coef != 0)
+coef_min_NOnul
+
+# RMSE relativos para evaluar ----------------------------------------
+error_media_1se <- rmse_1se / mean(y) 
+error_sd_1se <- rmse_1se / sd(y)
+
+error_media_min <- rmse_min / mean(y) 
+error_sd_min <- rmse_min / sd(y)
+
+# comparación de los mrse y numero de variables de los dos lambdas
+
+n_vars_min  <- sum(coef_lasso_min != 0) - 1  # -1 por el intercept
+n_vars_1se  <- sum(coef_lasso_1se != 0) - 1
+
+
+```
+
+Debido a la escasa cantidad de datos, se decidio no separar las variables en train y test, por lo que se informan los valores de Error medio cuadrático obrenido de los valores *"out of fold"* de la validación cruzada.
+
+```{r, results='markup'}
+rmse_comp <- data.frame(
+  modelo      = c("lambda.min", "lambda.1se"),
+  lambda      = c(lambda_min, lambda_1se),
+  n_variables = c(n_vars_min, n_vars_1se),
+  RMSE        = c(rmse_min, rmse_1se),
+  RMSE_med_y  = c(error_media_min, error_media_1se),
+  RMSE_sd_y   = c(error_sd_min, error_sd_1se)
+)
+rmse_comp
+```
+
+Al comparar los dos valores de penalización seleccionados por validación cruzada ($\lambda.min$ y $\lambda.1se$), observamos que el modelo con $\lambda.min$ obtiene el menor error cuadrático medio (RMSE = 2824.9), aunque utiliza 12 variables predictoras.
+
+Por otro lado, el modelo con $\lambda.1se$, orientado a la simplificación del modelo, reduce el número de variables predictoras a 8 (aproximadamente un tercio), con un incremento moderado en el RMSE (3101.4).
+
+En términos relativos, el error pasa de aprox.
+0.21 a 0.23 veces la media del precio, lo que representa una pérdida leve en desempeño predictivo a cambio de una simplificación importante del modelo.
+
+```{r, out.width="85%", fig.align='center'}
+# Coeficientes para graficar ---------------------------------------
+
+coef_min_df <- data.frame(
+  variable = rownames(as.matrix(coef_lasso_min)),
+  coef     = as.numeric(coef_lasso_min),
+  modelo   = "lambda.min"
+)
+
+coef_1se_df <- data.frame(
+  variable = rownames(as.matrix(coef_lasso_1se)),
+  coef     = as.numeric(coef_lasso_1se),
+  modelo   = "lambda.1se"
+)
+
+# unir
+coef_comparacion <- rbind(coef_min_df, coef_1se_df)
+
+# eliminar intercepto
+coef_comparacion <- coef_comparacion[coef_comparacion$variable != "(Intercept)", ]
+
+# Gráfico ------------------------------------------------------------------------
+
+ggplot(coef_comparacion, 
+       aes(x = variable, y = coef, fill = modelo)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(
+    title = "Comparación de coeficientes LASSO",
+    subtitle = "lambda.min vs lambda.1se",
+    x = "Variable",
+    y = "Coeficiente"
+  ) +
+  scale_fill_manual(values = c("lambda.min" = "#1f77b4",
+                               "lambda.1se" = "#ff7f0e")) +
+  theme_minimal()
+
+```
+
+\newpage
+## Modelo final
+
+```{r, results='markup'}
+cat("coeficiente de penalización del modelo:", lambda_1se)
+```
+
+```{r, results='markup'}
+cat("RMS del modelo:", rmse_1se)
+```
+
+**Coeficientes del modelo**
+
+```{r, results='markup'}
+coef_1se_NOnul
+```
+
+**Gráfico de Residuos**
+
+```{r, out.width="75%", fig.align='center'}
+pred_cv <- predict(cv_lasso, s = "lambda.1se", newx = X)
+pred_cv <- as.numeric(pred_cv)
+resid_cv <- y - pred_cv
+
+df_res <- data.frame(
+  predicted = pred_cv,
+  residuals = resid_cv
+)
+
+ggplot(df_res, aes(x = predicted, y = residuals)) +
+  geom_point(color = "steelblue", alpha = 0.7) +
+  geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 1, formula = y ~ x) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Residuals vs Fitted Values ",
+    x = "Predicted price",
+    y = "Residuals"
+  )
+
+```
+
+De acuerdo con la consigna del trabajo de obtener un modelo lo más simple posible sin comprometer demasiado la capacidad predictiva, seleccionamos el modelo LASSO asociado al factor de penalización $\lambda.1se$ como la mejor opción.
+
+Este modelo logra un adecuado compromiso entre simplicidad, interpretabilidad y error de predicción.
